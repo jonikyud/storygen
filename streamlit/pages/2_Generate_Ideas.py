@@ -1,12 +1,26 @@
 import streamlit as st
 import json
 from huggingface_hub import HfApi, ModelCard, ModelFilter
+from transformers import AutoModelForCausalLM, AutoTokenizer
+import torch
+
 from transformers import pipeline
 
 @st.cache_resource()
 def create_generator(model):
     # Long running operation to create the object based on the selected value
-    return pipeline("text-generation", model=model, tokenizer=model)
+    device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
+    print(device)
+
+    # Load the pre-trained model and tokenizer from Hugging Face (example: GPT-2)
+    model_name = model  # Replace this with your Hugging Face model
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+
+    # Load the model to the GPU (MPS backend)
+    model = AutoModelForCausalLM.from_pretrained(model_name).to(device)
+    return model, tokenizer
+
+    #return pipeline("text-generation", model=model, tokenizer=model)
 
 
 def getModelParams(model):
@@ -14,14 +28,23 @@ def getModelParams(model):
     return modelParams
 
 
-def generateIdea(generator,parameters):    
+def generateIdea(cached_model,cached_tokenizer,parameters):    
     # Load the text generation pipeline   
-
+    device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
     # Set the prompt for text generation
     prompt = f"{parameters}->"
     # Generate text
     print("loaded generator, beginning inference")
-    generated_text = generator(prompt, max_length=500, num_return_sequences=1)[0]['generated_text']
+    # Tokenize the input
+    input_ids = cached_tokenizer.encode(prompt, return_tensors="pt").to(device)  # Move the input to the GPU
+
+    # Generate text
+    output = cached_model.generate(input_ids, max_length=500, num_return_sequences=1)
+
+    # Decode the output and print
+    generated_text = cached_tokenizer.decode(output[0], skip_special_tokens=True)
+
+    #generated_text = generator(prompt, max_length=500, num_return_sequences=1)[0]['generated_text']
 
     # Print the generated text
     print(generated_text)
@@ -77,7 +100,7 @@ model = st.selectbox(
     )
 
 if model is not None:
-    cached_generator = create_generator(model)  
+    cached_model, cached_tokenizer = create_generator(model)  
     params = getModelParams(model)
     keywords = params[0]
     instruction= params[1]
@@ -92,7 +115,7 @@ if (model is not None) and (properties is not None) and (properties !=""):
     if submit_button:
         text = 'Generating idea...'
         another_load_state = st.text(text)
-        idea = generateIdea(cached_generator,properties)
+        idea = generateIdea(cached_model,cached_tokenizer,properties)
         another_load_state.text("Done!")  
         num_rows = len(idea) // 90 + 1  # Add 1 to ensure that even short strings occupy at least one row
         # Set the height of the text area based on the number of rows
